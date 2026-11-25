@@ -113,127 +113,6 @@
   "Test parsing org-mode timestamp to redmine date."
   (should (equal (orgmine-redmine-date "[2015-09-04 Fri]") "2015-09-04")))
 
-(ert-deftest orgmine-test-get-project-properties ()
-  "Test retrieving properties from a Project headline."
-  (orgmine-with-test-buffer
-    (re-search-forward "\\* SandBox")
-    (let ((pom (point)))
-      (should (equal (orgmine-get-property pom 'project) '(:project_id "1")))
-      (should (equal (orgmine-get-property pom 'status) '(:status "1")))
-      (should (equal (orgmine-get-property pom 'identifier) '(:identifier "sandbox"))))))
-
-(ert-deftest orgmine-test-get-tracker-properties ()
-  "Test retrieving properties from a Tracker headline."
-  (orgmine-with-test-buffer
-    (re-search-forward "\\* Tasks")
-    (let ((pom (point)))
-      (should (equal (orgmine-get-property pom 'tracker) '(:tracker_id "4")))
-      (should (equal (nth 1 (orgmine-get-property pom 'fixed_version nil nil t)) "!*")))))
-
-(ert-deftest orgmine-test-get-issue-properties ()
-  "Test retrieving properties from an Issue headline."
-  (orgmine-with-test-buffer
-    (search-forward "Implement orgmine-xxx")
-    (let ((pom (point)))
-      (should (equal (orgmine-get-property pom 'id) '(:id "24")))
-      (should (equal (orgmine-get-property pom 'tracker) '(:tracker_id "4"))))))
-
-(ert-deftest orgmine-test-extract-note-from-description ()
-  "Test extracting gfm block from description headline."
-  (orgmine-with-test-buffer
-    (re-search-forward "\\*\\*\\* Description")
-    (let* ((headline (org-element-at-point))
-           (note (orgmine-note headline)))
-      (should (stringp note))
-      (should (string-match-p "This is a hard part." note)))))
-
-(ert-deftest orgmine-test-update-title ()
-  "Test updating the headline title."
-  (orgmine-with-test-buffer
-    (search-forward "Implement orgmine-xxx")
-    (org-back-to-heading t)
-    (orgmine-update-title "[[redmine:issues/24][#24]] Updated Subject")
-    (should (string-match-p "Updated Subject" (thing-at-point 'line)))))
-
-(ert-deftest orgmine-test-insert-project-before-first-heading ()
-  "Test inserting a project before the first headline."
-  (with-temp-buffer
-    (insert "#+PROPERTY: om_server redmine\n#+PROPERTY: om_project 2:X\n\n")
-    (org-mode)
-    (org-set-regexps-and-options)
-    (let ((orgmine-servers
-           '(("redmine"
-              (host . "http://redmine.example.com")
-              (api-key . "blabblabblab")))))
-      (orgmine-mode t)
-      (goto-char (point-max))
-      (cl-letf (((symbol-function 'orgmine-get-project)
-                 (lambda (&rest _)
-                   '(:id 2 :name "X" :identifier "x" :status 1
-                     :created_on "2026-01-01T00:00:00Z"
-                     :updated_on "2026-01-01T00:00:00Z"))))
-        (orgmine-insert-project "2"))
-      (goto-char (point-min))
-      (re-search-forward "^\\* ")
-      (org-back-to-heading t)
-      (should (member orgmine-tag-project (org-get-tags)))
-      (should (equal (orgmine-idname-to-id
-                      (org-entry-get (point) "om_project"))
-                     "2")))))
-
-(ert-deftest orgmine-test-set-properties ()
-  "Test setting properties from Redmine plist."
-  (orgmine-with-test-buffer
-    (search-forward "Implement orgmine-xxx")
-    (org-back-to-heading t)
-    (let ((dummy-redmine-issue
-           '(:done_ratio 50
-             :assigned_to (:id 1 :name "Tokuya Kameshima"))))
-      (orgmine-set-properties 'issue dummy-redmine-issue '(done_ratio assigned_to))
-      (should (equal (org-entry-get (point) "om_done_ratio") "50"))
-      (should (equal (org-entry-get (point) "om_assigned_to") "1:Tokuya Kameshima")))))
-
-(ert-deftest orgmine-test-collect-update-plist ()
-  "Test collecting all update data into a plist from an Issue entry."
-  (orgmine-with-test-buffer
-    (search-forward "Implement orgmine-xxx")
-    (org-back-to-heading t)
-    (save-excursion
-      (search-forward "*** Description")
-      (org-back-to-heading t)
-      (org-toggle-tag "UPDATE_ME" 'on)
-      (goto-char (point-min))
-      (search-forward "note-2")
-      (org-back-to-heading t)
-      (org-toggle-tag "UPDATE_ME" 'on))
-    (let* ((issue-element (org-element-at-point))
-           (plist (orgmine-collect-update-plist issue-element :subject)))
-      (should (equal (plist-get plist :id) "24"))
-      (should (equal (plist-get plist :subject) "Implement orgmine-xxx function"))
-      (should (equal (plist-get plist :tracker_id) "4"))
-      (let ((desc (plist-get plist :description)))
-        (should (stringp desc))
-        (should (string-match-p "This is a hard part." desc)))
-      (let ((notes (plist-get plist :notes)))
-        (should (stringp notes))
-        (should (string-match-p "This is a note..." notes))))))
-
-(ert-deftest orgmine-test-insert-description ()
-  "Test updating the description text block inside an issue."
-  (orgmine-with-test-buffer
-    (search-forward "Implement orgmine-xxx")
-    (org-back-to-heading t)
-    (let* ((region (orgmine-subtree-region))
-           (beg (car region))
-           (end (cdr region))
-           (new-desc "This is a NEWLY UPDATED description text."))
-      (orgmine-insert-description new-desc beg end t)
-      (goto-char beg)
-      (should (search-forward new-desc end t))
-      (goto-char beg)
-      (should-not (search-forward "This is a hard part." end t)))))
-
-
 (ert-deftest orgmine-test-time-entry-key-equality ()
   "Time-entry and parsed-clock representations share a deduplication key."
   (let ((entry '(:spent_on "2024-01-02" :hours 1.5 :comments "  reviewed  "))
@@ -373,6 +252,127 @@
           (orgmine-sync-time-entries)
           (should (equal (buffer-string) after-first))
           (should-not created))))))
+
+(ert-deftest orgmine-test-get-project-properties ()
+  "Test retrieving properties from a Project headline."
+  (orgmine-with-test-buffer
+    (re-search-forward "\\* SandBox")
+    (let ((pom (point)))
+      (should (equal (orgmine-get-property pom 'project) '(:project_id "1")))
+      (should (equal (orgmine-get-property pom 'status) '(:status "1")))
+      (should (equal (orgmine-get-property pom 'identifier) '(:identifier "sandbox"))))))
+
+(ert-deftest orgmine-test-get-tracker-properties ()
+  "Test retrieving properties from a Tracker headline."
+  (orgmine-with-test-buffer
+    (re-search-forward "\\* Tasks")
+    (let ((pom (point)))
+      (should (equal (orgmine-get-property pom 'tracker) '(:tracker_id "4")))
+      (should (equal (nth 1 (orgmine-get-property pom 'fixed_version nil nil t)) "!*")))))
+
+(ert-deftest orgmine-test-get-issue-properties ()
+  "Test retrieving properties from an Issue headline."
+  (orgmine-with-test-buffer
+    (search-forward "Implement orgmine-xxx")
+    (let ((pom (point)))
+      (should (equal (orgmine-get-property pom 'id) '(:id "24")))
+      (should (equal (orgmine-get-property pom 'tracker) '(:tracker_id "4"))))))
+
+(ert-deftest orgmine-test-extract-note-from-description ()
+  "Test extracting gfm block from description headline."
+  (orgmine-with-test-buffer
+    (re-search-forward "\\*\\*\\* Description")
+    (let* ((headline (org-element-at-point))
+           (note (orgmine-note headline)))
+      (should (stringp note))
+      (should (string-match-p "This is a hard part." note)))))
+
+(ert-deftest orgmine-test-update-title ()
+  "Test updating the headline title."
+  (orgmine-with-test-buffer
+    (search-forward "Implement orgmine-xxx")
+    (org-back-to-heading t)
+    (orgmine-update-title "[[redmine:issues/24][#24]] Updated Subject")
+    (should (string-match-p "Updated Subject" (thing-at-point 'line)))))
+
+(ert-deftest orgmine-test-insert-project-before-first-heading ()
+  "Test inserting a project before the first headline."
+  (with-temp-buffer
+    (insert "#+PROPERTY: om_server redmine\n#+PROPERTY: om_project 2:X\n\n")
+    (org-mode)
+    (org-set-regexps-and-options)
+    (let ((orgmine-servers
+           '(("redmine"
+              (host . "http://redmine.example.com")
+              (api-key . "blabblabblab")))))
+      (orgmine-mode t)
+      (goto-char (point-max))
+      (cl-letf (((symbol-function 'orgmine-get-project)
+                 (lambda (&rest _)
+                   '(:id 2 :name "X" :identifier "x" :status 1
+                     :created_on "2026-01-01T00:00:00Z"
+                     :updated_on "2026-01-01T00:00:00Z"))))
+        (orgmine-insert-project "2"))
+      (goto-char (point-min))
+      (re-search-forward "^\\* ")
+      (org-back-to-heading t)
+      (should (member orgmine-tag-project (org-get-tags)))
+      (should (equal (orgmine-idname-to-id
+                      (org-entry-get (point) "om_project"))
+                     "2")))))
+
+(ert-deftest orgmine-test-set-properties ()
+  "Test setting properties from Redmine plist."
+  (orgmine-with-test-buffer
+    (search-forward "Implement orgmine-xxx")
+    (org-back-to-heading t)
+    (let ((dummy-redmine-issue
+           '(:done_ratio 50
+             :assigned_to (:id 1 :name "Tokuya Kameshima"))))
+      (orgmine-set-properties 'issue dummy-redmine-issue '(done_ratio assigned_to))
+      (should (equal (org-entry-get (point) "om_done_ratio") "50"))
+      (should (equal (org-entry-get (point) "om_assigned_to") "1:Tokuya Kameshima")))))
+
+(ert-deftest orgmine-test-collect-update-plist ()
+  "Test collecting all update data into a plist from an Issue entry."
+  (orgmine-with-test-buffer
+    (search-forward "Implement orgmine-xxx")
+    (org-back-to-heading t)
+    (save-excursion
+      (search-forward "*** Description")
+      (org-back-to-heading t)
+      (org-toggle-tag "UPDATE_ME" 'on)
+      (goto-char (point-min))
+      (search-forward "note-2")
+      (org-back-to-heading t)
+      (org-toggle-tag "UPDATE_ME" 'on))
+    (let* ((issue-element (org-element-at-point))
+           (plist (orgmine-collect-update-plist issue-element :subject)))
+      (should (equal (plist-get plist :id) "24"))
+      (should (equal (plist-get plist :subject) "Implement orgmine-xxx function"))
+      (should (equal (plist-get plist :tracker_id) "4"))
+      (let ((desc (plist-get plist :description)))
+        (should (stringp desc))
+        (should (string-match-p "This is a hard part." desc)))
+      (let ((notes (plist-get plist :notes)))
+        (should (stringp notes))
+        (should (string-match-p "This is a note..." notes))))))
+
+(ert-deftest orgmine-test-insert-description ()
+  "Test updating the description text block inside an issue."
+  (orgmine-with-test-buffer
+    (search-forward "Implement orgmine-xxx")
+    (org-back-to-heading t)
+    (let* ((region (orgmine-subtree-region))
+           (beg (car region))
+           (end (cdr region))
+           (new-desc "This is a NEWLY UPDATED description text."))
+      (orgmine-insert-description new-desc beg end t)
+      (goto-char beg)
+      (should (search-forward new-desc end t))
+      (goto-char beg)
+      (should-not (search-forward "This is a hard part." end t)))))
+
 (ert-deftest orgmine-test-status-keyword-alist ()
   "Test mapping Redmine status names to Org TODO keywords."
   (let ((orgmine-status-keyword-alist '(("In Progress" . "DOING"))))
